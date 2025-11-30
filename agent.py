@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 import os
 
 load_dotenv()
-YOUR_GITHUB_AUTH_TOKEN = os.getenv("GITHUB_AUTH_TOKEN")
+GITHUB_AUTH_TOKEN = os.getenv("GITHUB_AUTH_TOKEN")
 
 executor = BuiltInCodeExecutor()
 
@@ -53,6 +53,15 @@ SearchAgent = Agent(
 
 seeker = AgentTool(agent=SearchAgent)
 
+summarizeAgent = Agent(
+    name="SummarizeAgent",
+    model="gemini-2.5-flash",
+    instruction="You are a helpful agent that summarizes text content concisely.",
+    description="Use this agent to summarize text content.",
+)
+
+summarizer = AgentTool(agent=summarizeAgent)
+
 instruction = """You are a friendly and helpful AI assistant. You can answer general questions, explain ideas,
 and help with day-to-day tasks.
 
@@ -62,6 +71,7 @@ You have access to:
 - run_code (to safely execute code)
 
 When asked about a company or job:
+Summarize the response after each STAGE using summarizer tool.
 STAGE 1 : Check the reputation of the company by using GitHub MCP, web search (via the SearchAgent / google_search), web-scraping, and a summarizer to confirm the company's existence and reviews. Follow the steps below and give points for each step as described (0 -> worst to n -> best).
 
 {
@@ -82,7 +92,20 @@ STAGE 3 : Validity of the company
 Step 1 - 10 points: Assess company validity by surveying internet presence (official registrations, press coverage, corporate pages) and award points according to the strength of evidence.
 Step 2 - 15 points: Check professional contact details of key employees (CEOs, CFOs, COOs, HR, recruiters) listed on the job site. Verify LinkedIn or other professional profiles via web search and summarizer. Give full points if credible profiles exist and clearly tie to the company (strong connections/followers); reduce points if profiles are missing or do not mention the company. Give -20 if no key employees have verifiable professional profiles and flag this strongly in the final report.
 }
-Summarize the whole report, include the scored breakdown, short reasoning for each score, and 
+Return only the summarized report using summarizer include the scored breakdown, short reasoning for each score, and references used and give the output in less than 300 words.
+
+You can also compare GitHub profiles of multiple job applicants. When the user provides two or more GitHub usernames:
+
+1. Use the GitHub MCP server to fetch each applicant's public GitHub profile and repository information.
+2. Analyze their coding activity, languages used, project quality, contribution history, collaboration, commit frequency, documentation, and overall engineering practices.
+3. Identify strengths and weaknesses for each applicant, including which technologies they are better at.
+4. Score each applicant across categories such as activity, project complexity, documentation quality, collaboration, and tech stack strength.
+5. Produce a comparative report showing:
+   - Skill strengths of each applicant
+   - Which applicant is stronger in which skill or area
+   - A final ranking or summary describing who is better suited for the job or role
+6. Provide friendly, constructive suggestions for improvement for each applicant.
+
 
 When given code:
 - Use debug_code to identify issues.
@@ -94,6 +117,7 @@ For everything else:
 
 """
 
+
 root_agent = Agent(
     name="GithubRepoInfoAgent",
     model="gemini-2.5-flash",
@@ -103,15 +127,17 @@ root_agent = Agent(
         McpToolset(
             connection_params=StreamableHTTPConnectionParams(
                 url="https://api.githubcopilot.com/mcp/",
-                headers={"Authorization": YOUR_GITHUB_AUTH_TOKEN},
+                headers={"Authorization": GITHUB_AUTH_TOKEN},
                 sse_read_timeout=10,
             ),
         ),
         debug_code,
         run_code,
         seeker,
+        summarizer
         ],
 )
+
 
 session_service = InMemorySessionService()
 runner = InMemoryRunner(agent=root_agent)
