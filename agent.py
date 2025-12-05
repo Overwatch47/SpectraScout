@@ -1,6 +1,21 @@
+"""SpectraScout agent definitions and helpers.
+
+This module sets up a collection of helper functions and ADK Agent
+instances used to perform searches, summarize text, analyze and safely
+execute Python code, and query GitHub via an MCP server.
+
+The file intentionally keeps runtime components (like sessions and
+runners) lightweight by using in-memory implementations suitable for
+local development and testing.
+"""
+
+# Standard and third-party imports
 from google.adk.tools import AgentTool
 from google.adk.agents import Agent
-from google.adk.tools.mcp_tool.mcp_toolset import (McpToolset, StreamableHTTPConnectionParams)
+from google.adk.tools.mcp_tool.mcp_toolset import (
+    McpToolset,
+    StreamableHTTPConnectionParams,
+)
 from google.adk.code_executors import BuiltInCodeExecutor
 from google.adk.sessions import InMemorySessionService
 from google.adk.runners import InMemoryRunner
@@ -8,16 +23,34 @@ from google.adk.tools import google_search
 from dotenv import load_dotenv
 import os
 
+# Load environment variables from a .env file (if present). This is how
+# sensitive values like API tokens can be provided during local testing.
 load_dotenv()
+# GitHub authentication token read from environment; used by the MCP
+# toolset below to authenticate requests to the GitHub MCP server.
 GITHUB_AUTH_TOKEN = os.getenv("GITHUB_AUTH_TOKEN")
 
+# A simple built-in code executor provided by the ADK. It's used by the
+# helper `run_code` to execute Python code inside the ADK sandbox.
 executor = BuiltInCodeExecutor()
 
 
 def debug_code(code: str) -> str:
+    """Analyze Python source for syntax problems.
+
+    This helper uses Python's `ast` module to parse the provided source
+    and returns either a success message or a formatted syntax error
+    message. It is intentionally conservative: it does not attempt to
+    execute the code, only to detect parsing problems and provide a
+    human-friendly location of the error.
+
+    Args:
+        code: The Python source code to analyze as a string.
+
+    Returns:
+        A short string describing whether a syntax error was found or not.
     """
-    Analyzes Python code, finds likely errors, and suggests a corrected version.
-    """
+
     import ast
 
     try:
@@ -31,9 +64,25 @@ def debug_code(code: str) -> str:
 
 
 def run_code(code: str) -> str:
+    """Execute Python code using the ADK `BuiltInCodeExecutor`.
+
+    This helper forwards `code` to the `executor` and formats the
+    result as a string. It avoids exposing low-level executor objects
+    to callers and makes it easy to embed execution as a tool for
+    higher-level agents.
+
+    Note: The executor runs in a sandboxed environment provided by the
+    ADK; the exact isolation guarantees depend on the ADK runtime and
+    should be reviewed before running untrusted code in production.
+
+    Args:
+        code: Python source to run.
+
+    Returns:
+        A string containing either the runtime error or the captured
+        output from execution.
     """
-    Runs Python code inside the ADK sandbox using InBuiltCodeExecutor.
-    """
+
     result = executor.run(code)
 
     if result.error:
@@ -124,6 +173,9 @@ root_agent = Agent(
     description="An agent that provides Github repository information from the github API.",
     instruction=instruction,
     tools=[
+        # McpToolset allows the agent to query GitHub-style MCP endpoints.
+        # We pass a streamable connection so the agent can receive SSE
+        # events or long-lived responses when supported by the backend.
         McpToolset(
             connection_params=StreamableHTTPConnectionParams(
                 url="https://api.githubcopilot.com/mcp/",
@@ -131,13 +183,19 @@ root_agent = Agent(
                 sse_read_timeout=10,
             ),
         ),
-        debug_code,
-        run_code,
-        seeker,
-        summarizer
-        ],
+        # Utility tools exposed to the agent:
+        debug_code,  # static analysis for Python source
+        run_code,  # sandboxed execution of Python code
+        seeker,  # search agent wrapped as a tool for web queries
+        summarizer,  # summarization helper wrapped as a tool
+    ],
 )
 
 
 session_service = InMemorySessionService()
 runner = InMemoryRunner(agent=root_agent)
+
+# The `session_service` and `runner` are intentionally simple in-memory
+# implementations to keep local testing lightweight. For production use
+# you would replace these with persisted/session-backed implementations
+# appropriate for the deployment environment.
